@@ -1,0 +1,222 @@
+name: Build StaffCmds
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Create project files
+        run: |
+          mkdir -p src/main/java/ru/ruslan/staffcmds src/main/resources
+
+          cat > pom.xml << 'POM_EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>ru.ruslan</groupId>
+            <artifactId>StaffCmds</artifactId>
+            <version>1.0.0</version>
+            <packaging>jar</packaging>
+          
+            <properties>
+              <maven.compiler.source>17</maven.compiler.source>
+              <maven.compiler.target>17</maven.compiler.target>
+              <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+            </properties>
+          
+            <repositories>
+              <repository>
+                <id>opencollab</id>
+                <url>https://repo.opencollab.dev/maven-snapshots/</url>
+              </repository>
+            </repositories>
+          
+            <dependencies>
+              <dependency>
+                <groupId>cn.nukkit</groupId>
+                <artifactId>nukkit</artifactId>
+                <version>1.0-SNAPSHOT</version>
+                <scope>provided</scope>
+              </dependency>
+            </dependencies>
+          </project>
+          POM_EOF
+
+          cat > src/main/resources/plugin.yml << 'YML_EOF'
+          name: StaffCmds
+          main: ru.ruslan.staffcmds.Main
+          version: 1.0.0
+          api: ["1.0.0"]
+          author: Ruslan
+          description: Staff commands integrated with LuckPerms
+          softdepend: [LuckPerms]
+          
+          commands:
+            sp:
+              description: Режим наблюдателя
+              usage: /sp
+              permission: staffcmds.sp
+            gm:
+              description: Креатив (1) или выживание (2)
+              usage: /gm <1|2>
+              permission: staffcmds.gm
+            fly:
+              description: Включить/выключить полёт
+              usage: /fly
+              permission: staffcmds.fly
+            moder:
+              description: Выдать модератора
+              usage: /moder <ник>
+              permission: staffcmds.moder
+            sn:
+              description: Снять привилегию
+              usage: /sn <ник>
+              permission: staffcmds.sn
+            list:
+              description: Список привилегий (групп LuckPerms)
+              usage: /list
+              permission: staffcmds.list
+          
+          permissions:
+            staffcmds.sp:
+              default: op
+            staffcmds.gm:
+              default: op
+            staffcmds.fly:
+              default: op
+            staffcmds.moder:
+              default: op
+            staffcmds.sn:
+              default: op
+            staffcmds.list:
+              default: op
+          YML_EOF
+
+          cat > src/main/java/ru/ruslan/staffcmds/Main.java << 'JAVA_EOF'
+          package ru.ruslan.staffcmds;
+          
+          import cn.nukkit.AdventureSettings;
+          import cn.nukkit.Player;
+          import cn.nukkit.command.Command;
+          import cn.nukkit.command.CommandSender;
+          import cn.nukkit.plugin.PluginBase;
+          import cn.nukkit.utils.TextFormat;
+          
+          public class Main extends PluginBase {
+          
+              private static final String NICK_REGEX = "[A-Za-z0-9_]{1,32}";
+          
+              @Override
+              public void onLoad() {
+                  try {
+                      getServer().getCommandMap().getCommands().remove("gm");
+                      getServer().getCommandMap().getCommands().remove("list");
+                  } catch (Exception e) {
+                      getLogger().warning("Не удалось убрать стандартные команды: " + e.getMessage());
+                  }
+              }
+          
+              @Override
+              public void onEnable() {
+                  if (getServer().getPluginManager().getPlugin("LuckPerms") == null) {
+                      getLogger().warning("LuckPerms не найден! /moder, /sn и /list работать не будут.");
+                  }
+                  getLogger().info("StaffCmds включён.");
+              }
+          
+              @Override
+              public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+                  String name = command.getName().toLowerCase();
+          
+                  switch (name) {
+                      case "sp":
+                          if (!(sender instanceof Player)) return playerOnly(sender);
+                          ((Player) sender).setGamemode(Player.SPECTATOR);
+                          sender.sendMessage(TextFormat.GREEN + "Режим наблюдателя включён.");
+                          return true;
+          
+                      case "gm":
+                          if (!(sender instanceof Player)) return playerOnly(sender);
+                          if (args.length < 1) return false;
+                          Player p = (Player) sender;
+                          if (args[0].equals("1")) {
+                              p.setGamemode(Player.CREATIVE);
+                              p.sendMessage(TextFormat.GREEN + "Режим: креатив.");
+                          } else if (args[0].equals("2")) {
+                              p.setGamemode(Player.SURVIVAL);
+                              p.sendMessage(TextFormat.GREEN + "Режим: выживание.");
+                          } else {
+                              return false;
+                          }
+                          return true;
+          
+                      case "fly":
+                          if (!(sender instanceof Player)) return playerOnly(sender);
+                          Player f = (Player) sender;
+                          boolean enable = !f.getAdventureSettings().get(AdventureSettings.Type.ALLOW_FLIGHT);
+                          f.getAdventureSettings().set(AdventureSettings.Type.ALLOW_FLIGHT, enable);
+                          if (!enable) {
+                              f.getAdventureSettings().set(AdventureSettings.Type.FLYING, false);
+                          }
+                          f.getAdventureSettings().update();
+                          f.sendMessage(enable
+                                  ? TextFormat.GREEN + "Полёт включён."
+                                  : TextFormat.YELLOW + "Полёт выключен.");
+                          return true;
+          
+                      case "moder":
+                          if (args.length < 1) return false;
+                          if (!args[0].matches(NICK_REGEX)) {
+                              sender.sendMessage(TextFormat.RED + "Неверный ник.");
+                              return true;
+                          }
+                          runLp("lp user " + args[0] + " parent set moderator");
+                          sender.sendMessage(TextFormat.GREEN + "Игроку " + args[0] + " выдана группа moderator.");
+                          return true;
+          
+                      case "sn":
+                          if (args.length < 1) return false;
+                          if (!args[0].matches(NICK_REGEX)) {
+                              sender.sendMessage(TextFormat.RED + "Неверный ник.");
+                              return true;
+                          }
+                          runLp("lp user " + args[0] + " parent set default");
+                          sender.sendMessage(TextFormat.YELLOW + "У игрока " + args[0] + " снята привилегия (группа default).");
+                          return true;
+          
+                      case "list":
+                          getServer().dispatchCommand(sender, "lp listgroups");
+                          return true;
+                  }
+                  return false;
+              }
+          
+              private void runLp(String cmd) {
+                  getServer().dispatchCommand(getServer().getConsoleSender(), cmd);
+              }
+          
+              private boolean playerOnly(CommandSender sender) {
+                  sender.sendMessage(TextFormat.RED + "Только для игроков.");
+                  return true;
+              }
+          }
+          JAVA_EOF
+
+      - name: Build
+        run: mvn -B package
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: StaffCmds
+          path: target/StaffCmds-1.0.0.jar
